@@ -81,7 +81,7 @@ def apply_solid(image: np.ndarray, regions: List[Tuple[int, int, int, int]], col
         if x2 <= x1 or y2 <= y1:
             continue
 
-        cv2.rectangle(result, (x1, y1), (x2, y2), color, -1)
+        result[y1:y2, x1:x2] = color
 
     return result
 

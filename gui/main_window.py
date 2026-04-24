@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QProgressDialog, QStatusBar,
 )
 
+from core.image_io import read_image, write_image
 from core.redactor import redact_image
 
 
@@ -65,13 +66,27 @@ class ImageCanvas(QWidget):
         self._selected_idx = -1
         self._update_display()
 
-    def set_regions(self, regions: list[tuple]):
-        self._regions = [{'rect': r, 'enabled': True} for r in regions]
+    def set_regions(self, regions: list[tuple | dict]):
+        self._regions = []
+        for region in regions:
+            if isinstance(region, dict):
+                self._regions.append({
+                    'rect': tuple(region['rect']),
+                    'enabled': bool(region.get('enabled', True)),
+                })
+            else:
+                self._regions.append({'rect': tuple(region), 'enabled': True})
         self._selected_idx = -1
         self.update()
 
     def get_regions(self) -> list[tuple]:
         return [r['rect'] for r in self._regions]
+
+    def get_region_states(self) -> list[dict]:
+        return [
+            {'rect': tuple(r['rect']), 'enabled': bool(r.get('enabled', True))}
+            for r in self._regions
+        ]
 
     def get_enabled_regions(self) -> list[tuple]:
         return [r['rect'] for r in self._regions if r['enabled']]
@@ -343,23 +358,30 @@ class ImageCanvas(QWidget):
         sx, sy, sw, sh = orig
         dx = int((curr.x() - start.x()) / self._scale)
         dy = int((curr.y() - start.y()) / self._scale)
+        min_size = 10
+
+        left = sx
+        top = sy
+        right = sx + sw
+        bottom = sy + sh
 
         if 'L' in handle:
-            sx += dx
-            sw -= dx
+            left = min(sx + dx, right - min_size)
         if 'R' in handle:
-            sw += dx
+            right = max(right + dx, left + min_size)
         if 'T' in handle:
-            sy += dy
-            sh -= dy
+            top = min(sy + dy, bottom - min_size)
         if 'B' in handle:
-            sh += dy
+            bottom = max(bottom + dy, top + min_size)
 
-        if sw < 10:
-            sw = 10
-        if sh < 10:
-            sh = 10
-        return sx, sy, sw, sh
+        if self._image is not None:
+            img_h, img_w = self._image.shape[:2]
+            left = max(0, min(left, img_w - min_size))
+            top = max(0, min(top, img_h - min_size))
+            right = max(left + min_size, min(right, img_w))
+            bottom = max(top + min_size, min(bottom, img_h))
+
+        return left, top, right - left, bottom - top
 
     def _calc_move(self, orig: tuple, start: QPoint, curr: QPoint) -> tuple:
         sx, sy, sw, sh = orig
@@ -403,10 +425,10 @@ class MainWindow(QMainWindow):
         # Batch processing
         self._batch_paths: list[str] = []
         self._batch_idx = -1
-        self._batch_regions: dict[int, list[tuple]] = {}
+        self._batch_regions: dict[int, list[dict]] = {}
 
-        # Undo / redo history (list of list[tuple])
-        self._history: list[list[tuple]] = []
+        # Undo history stores both rectangle geometry and enabled state.
+        self._history: list[list[dict]] = []
         self._history_idx = -1
         self._max_history = 50
 
@@ -509,14 +531,10 @@ class MainWindow(QMainWindow):
             btn = QPushButton()
             btn.setFixedSize(22, 22)
             btn.setToolTip(name)
-            r, g, b = rgb
-            btn.setStyleSheet(
-                f"QPushButton {{ background-color: rgb({r},{g},{b}); border: 2px solid #999; border-radius: 3px; }}"
-                f"QPushButton:hover {{ border: 2px solid #333; }}"
-            )
-            btn.clicked.connect(lambda checked, c=rgb: self._set_solid_color(c))
+            btn.clicked.connect(lambda checked=False, c=rgb: self._set_solid_color(c))
             self._color_buttons.append(btn)
             color_lo.addWidget(btn)
+        self._refresh_color_buttons()
         self.color_picker_widget.setVisible(False)
         toolbar.addWidget(self.color_picker_widget)
 
@@ -712,7 +730,7 @@ class MainWindow(QMainWindow):
         if not self._batch_paths or self._batch_idx < 0:
             return
         path = self._batch_paths[self._batch_idx]
-        image = cv2.imread(path)
+        image = read_image(path)
         if image is None:
             QMessageBox.critical(self, "错误", f"无法加载图片:\n{path}")
             return
@@ -752,14 +770,14 @@ class MainWindow(QMainWindow):
             return
         # Save current regions before switching
         if 0 <= self._batch_idx < len(self._batch_paths):
-            self._batch_regions[self._batch_idx] = self.canvas_source.get_regions()
+            self._batch_regions[self._batch_idx] = self.canvas_source.get_region_states()
         self._batch_idx = row
         self._load_current_image()
 
     # -- region management --
 
     def _push_history(self):
-        regions = self.canvas_source.get_regions()
+        regions = self.canvas_source.get_region_states()
         # Remove redo branch
         self._history = self._history[:self._history_idx + 1]
         self._history.append(list(regions))
@@ -799,7 +817,8 @@ class MainWindow(QMainWindow):
         for i, r in enumerate(self.canvas_source.get_regions()):
             item = QListWidgetItem(f"区域 {i + 1}  ({r[2]}x{r[3]})")
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-            item.setCheckState(Qt.Checked)
+            enabled = self.canvas_source._regions[i].get('enabled', True)
+            item.setCheckState(Qt.Checked if enabled else Qt.Unchecked)
             item.setData(Qt.UserRole, i)
             self.list_regions.addItem(item)
         self.list_regions.blockSignals(False)
@@ -855,6 +874,7 @@ class MainWindow(QMainWindow):
         enabled = item.checkState() == Qt.Checked
         self.canvas_source.set_region_enabled(idx, enabled)
         self._update_preview()
+        self._push_history()
 
     def _on_list_row_changed(self, row: int):
         self.canvas_source.select_region(row)
@@ -900,7 +920,19 @@ class MainWindow(QMainWindow):
 
     def _set_solid_color(self, rgb: tuple):
         self._solid_color_rgb = rgb
+        self._refresh_color_buttons()
         self._update_preview()
+
+    def _refresh_color_buttons(self):
+        for btn, rgb in zip(self._color_buttons, [(0, 0, 0), (128, 128, 128), (255, 255, 255)]):
+            r, g, b = rgb
+            selected = rgb == self._solid_color_rgb
+            border = "#1677ff" if selected else "#999"
+            width = 3 if selected else 2
+            btn.setStyleSheet(
+                f"QPushButton {{ background-color: rgb({r},{g},{b}); border: {width}px solid {border}; border-radius: 3px; }}"
+                f"QPushButton:hover {{ border: 2px solid #333; }}"
+            )
 
     # -- preview & export --
 
@@ -939,8 +971,10 @@ class MainWindow(QMainWindow):
             self, "保存图片", str(default_name),
             "PNG (*.png);;JPEG (*.jpg);;BMP (*.bmp)")
         if path:
-            cv2.imwrite(path, self._current_result)
-            self.statusBar().showMessage(f"已保存: {path}")
+            if write_image(path, self._current_result):
+                self.statusBar().showMessage(f"已保存: {path}")
+            else:
+                QMessageBox.critical(self, "错误", f"无法保存图片:\n{path}")
 
     def _batch_export(self):
         if not self._batch_paths:
@@ -948,10 +982,13 @@ class MainWindow(QMainWindow):
 
         # Save current image's regions first
         if 0 <= self._batch_idx < len(self._batch_paths):
-            self._batch_regions[self._batch_idx] = self.canvas_source.get_regions()
+            self._batch_regions[self._batch_idx] = self.canvas_source.get_region_states()
 
-        # Check if any image has regions
-        has_any = any(self._batch_regions.get(i, []) for i in range(len(self._batch_paths)))
+        # Check if any image has enabled regions
+        has_any = any(
+            any(region.get('enabled', True) for region in self._batch_regions.get(i, []))
+            for i in range(len(self._batch_paths))
+        )
         if not has_any:
             QMessageBox.warning(self, "提示", "没有框选区域，请先框选")
             return
@@ -975,11 +1012,15 @@ class MainWindow(QMainWindow):
             if progress.wasCanceled():
                 break
 
-            img = cv2.imread(path)
+            img = read_image(path)
             if img is None:
                 continue
 
-            regions = self._batch_regions.get(i, [])
+            regions = [
+                tuple(region['rect'])
+                for region in self._batch_regions.get(i, [])
+                if region.get('enabled', True)
+            ]
             if regions:
                 if mode == "mosaic":
                     result = redact_image(img, regions, mode, block_size=intensity)
@@ -994,8 +1035,8 @@ class MainWindow(QMainWindow):
 
             src = Path(path)
             out_path = Path(folder) / (src.stem + "_redacted" + src.suffix)
-            cv2.imwrite(str(out_path), result)
-            saved += 1
+            if write_image(out_path, result):
+                saved += 1
 
         progress.setValue(len(self._batch_paths))
         QMessageBox.information(self, "完成", f"成功处理 {saved}/{len(self._batch_paths)} 张图片")

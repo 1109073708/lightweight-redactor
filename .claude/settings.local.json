@@ -1,7 +1,16 @@
 {
   "permissions": {
     "allow": [
-      "Bash(python *)"
+      "Bash(python *)",
+      "Bash(.venv/Scripts/pip install *)",
+      "Bash(deactivate)",
+      "Bash(rm -rf .venv)",
+      "Bash(.venv/Scripts/pyinstaller main.spec --clean --noconfirm)",
+      "Bash(.venv/Scripts/python -c \"import PySide6.QtCore; print\\('OK'\\)\")",
+      "Bash(F:/anaconda/python -c \"import PySide6.QtCore; print\\('PySide6 OK'\\)\")",
+      "Bash(F:/anaconda/python -c \"import cv2; print\\('cv2 OK'\\)\")",
+      "Bash(conda install *)",
+      "Bash(.venv/Scripts/python -c \"import PySide6.QtCore; import cv2; import numpy; print\\('All OK'\\)\")"
     ]
   }
 }

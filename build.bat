@@ -21,8 +21,7 @@ if exist dist rmdir /s /q dist
 echo [2/3] 执行 PyInstaller 打包...
 pyinstaller main.spec --clean --noconfirm
 
-echo [3/3] 复制依赖文件...
-if exist settings.json copy settings.json dist\ /y >nul
+echo [3/3] 跳过本地配置文件...
 
 if exist "dist\微信聊天打码工具.exe" (
     echo.
