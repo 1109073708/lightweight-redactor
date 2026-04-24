@@ -23,11 +23,11 @@ pyinstaller main.spec --clean --noconfirm
 
 echo [3/3] 跳过本地配置文件...
 
-if exist "dist\微信聊天打码工具.exe" (
+if exist "dist\轻量化打码工具\轻量化打码工具.exe" (
     echo.
     echo ======================================
     echo  打包成功！
-    echo  输出文件：dist\微信聊天打码工具.exe
+    echo  输出文件：dist\轻量化打码工具\轻量化打码工具.exe
     echo ======================================
 ) else (
     echo.
