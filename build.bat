@@ -9,7 +9,7 @@ REM Check if pyinstaller is installed
 pyinstaller --version >nul 2>&1
 if errorlevel 1 (
     echo [错误] 未检测到 PyInstaller，请先安装：
-    echo   pip install pyinstaller
+    echo   pip install -r requirements-dev.txt
     pause
     exit /b 1
 )

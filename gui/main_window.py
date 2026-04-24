@@ -1264,6 +1264,7 @@ class MainWindow(QMainWindow):
             return
         regions = self.canvas_source.get_enabled_regions()
         if not regions:
+            self._current_result = self._source_image.copy()
             self.canvas_preview.set_image(self._source_image)
             return
 
