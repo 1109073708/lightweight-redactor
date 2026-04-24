@@ -7,7 +7,7 @@ a = Analysis(
     ['main.py'],
     pathex=[SPECPATH],
     binaries=[],
-    datas=[],
+    datas=[('icon.ico', '.')] if os.path.exists('icon.ico') else [],
     hiddenimports=[
         'PySide6',
         'PySide6.QtCore',

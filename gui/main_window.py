@@ -5,18 +5,27 @@ import cv2
 import numpy as np
 from PySide6.QtCore import Qt, QRect, QPoint, Signal
 from PySide6.QtGui import (
-    QImage, QPixmap, QPainter, QPen, QColor, QFont, QIcon,
+    QImage, QPixmap, QPainter, QPen, QColor, QFont, QIcon, QFontMetrics,
     QDragEnterEvent, QDropEvent, QMouseEvent, QPaintEvent, QKeyEvent,
 )
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QPushButton, QComboBox, QListWidget, QListWidgetItem,
+    QLabel, QPushButton, QListWidget, QListWidgetItem,
     QFileDialog, QMessageBox, QGroupBox, QSlider, QSplitter,
-    QProgressDialog, QStatusBar,
+    QProgressDialog, QStatusBar, QFrame,
 )
 
 from core.image_io import read_image, write_image
 from core.redactor import redact_image
+
+
+def resource_path(filename: str) -> Path:
+    base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
+    return base / filename
+
+
+def app_icon() -> QIcon:
+    return QIcon(str(resource_path("icon.ico")))
 
 
 # ---------------------------------------------------------------------------
@@ -167,7 +176,7 @@ class ImageCanvas(QWidget):
 
     def paintEvent(self, event: QPaintEvent):
         painter = QPainter(self)
-        painter.fillRect(self.rect(), QColor(45, 45, 45))
+        painter.fillRect(self.rect(), QColor(17, 24, 39))
         if not self._display_pixmap:
             return
 
@@ -180,9 +189,9 @@ class ImageCanvas(QWidget):
             rect = QRect(p1, p2)
 
             is_selected = (i == self._selected_idx)
-            color = QColor(255, 80, 80) if region['enabled'] else QColor(150, 150, 150)
+            color = QColor(239, 68, 68) if region['enabled'] else QColor(148, 163, 184)
             if is_selected:
-                color = QColor(0, 200, 255)
+                color = QColor(37, 99, 235)
 
             pen = QPen(color, 2 if is_selected else 2,
                        Qt.SolidLine if region['enabled'] else Qt.DashLine)
@@ -201,7 +210,7 @@ class ImageCanvas(QWidget):
             # Draw handles if selected
             if is_selected:
                 hs = self.HANDLE_SIZE
-                painter.setBrush(QColor(0, 200, 255))
+                painter.setBrush(QColor(37, 99, 235))
                 painter.setPen(QPen(QColor(255, 255, 255), 1))
                 for pt in [(p1.x(), p1.y()), (p2.x(), p1.y()),
                            (p1.x(), p2.y()), (p2.x(), p2.y())]:
@@ -211,7 +220,7 @@ class ImageCanvas(QWidget):
         # Draw drag rect for new region
         if self._mode == "draw" and self._action == "draw":
             r = QRect(self._start_pos, self._drag_current).normalized()
-            painter.setPen(QPen(QColor(255, 255, 0), 2, Qt.DashLine))
+            painter.setPen(QPen(QColor(16, 185, 129), 2, Qt.DashLine))
             painter.drawRect(r)
 
     # -- mouse events --
@@ -410,6 +419,78 @@ class ImageCanvas(QWidget):
 
 
 # ---------------------------------------------------------------------------
+# ModeSelector: fixed below-popup mode picker
+# ---------------------------------------------------------------------------
+
+class ModeSelector(QWidget):
+    currentIndexChanged = Signal(int)
+    H_PADDING = 20
+    ARROW_WIDTH = 16
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._items: list[str] = []
+        self._current_index = -1
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        self._button = QPushButton()
+        self._button.setObjectName("modeSelectorButton")
+        self._button.clicked.connect(self._show_popup)
+        layout.addWidget(self._button)
+
+        self._popup = QFrame(None, Qt.Popup | Qt.FramelessWindowHint)
+        self._popup.setObjectName("modeSelectorPopup")
+        self._popup_layout = QVBoxLayout(self._popup)
+        self._popup_layout.setContentsMargins(0, 0, 0, 0)
+        self._popup_layout.setSpacing(1)
+
+    def addItems(self, items: list[str]):
+        self._items = list(items)
+        width = self._calc_width()
+        self.setFixedWidth(width)
+        self._button.setFixedSize(width, 32)
+        for i, text in enumerate(self._items):
+            btn = QPushButton(text)
+            btn.setObjectName("modeSelectorItem")
+            btn.setFixedSize(width, 30)
+            btn.clicked.connect(lambda checked=False, idx=i: self._select_index(idx))
+            self._popup_layout.addWidget(btn)
+        if self._items:
+            self._select_index(0, emit=False)
+
+    def currentText(self) -> str:
+        if 0 <= self._current_index < len(self._items):
+            return self._items[self._current_index]
+        return ""
+
+    def setCurrentText(self, text: str):
+        if text in self._items:
+            self._select_index(self._items.index(text))
+
+    def _show_popup(self):
+        self._popup.adjustSize()
+        pos = self.mapToGlobal(QPoint(0, self.height() + 2))
+        self._popup.move(pos)
+        self._popup.show()
+
+    def _select_index(self, index: int, emit: bool = True):
+        if not 0 <= index < len(self._items):
+            return
+        self._current_index = index
+        self._button.setText(f"{self._items[index]} ▼")
+        self._popup.hide()
+        if emit:
+            self.currentIndexChanged.emit(index)
+
+    def _calc_width(self) -> int:
+        metrics = QFontMetrics(self.font())
+        text_width = max((metrics.horizontalAdvance(text) for text in self._items), default=72)
+        return text_width + self.H_PADDING + self.ARROW_WIDTH
+
+
+# ---------------------------------------------------------------------------
 # MainWindow
 # ---------------------------------------------------------------------------
 
@@ -417,6 +498,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("轻量化打码工具")
+        self.setWindowIcon(app_icon())
         self.setMinimumSize(1400, 900)
 
         self._source_image: np.ndarray | None = None
@@ -433,6 +515,7 @@ class MainWindow(QMainWindow):
         self._max_history = 50
 
         self._setup_ui()
+        self._setup_theme()
         self._setup_shortcuts()
 
     # -- UI setup --
@@ -440,21 +523,27 @@ class MainWindow(QMainWindow):
     def _setup_ui(self):
         central = QWidget()
         self.setCentralWidget(central)
+        central.setObjectName("centralWidget")
         main_layout = QHBoxLayout(central)
-        main_layout.setSpacing(10)
-        main_layout.setContentsMargins(10, 10, 10, 10)
+        main_layout.setSpacing(12)
+        main_layout.setContentsMargins(12, 12, 12, 12)
 
         # ===== Left: image canvases =====
         left_panel = QVBoxLayout()
+        left_panel.setSpacing(10)
 
         # Toolbar
         toolbar = QHBoxLayout()
+        toolbar.setSpacing(8)
+        toolbar.setContentsMargins(0, 0, 0, 0)
 
         self.btn_load = QPushButton("打开图片")
+        self.btn_load.setProperty("variant", "primary")
         self.btn_load.clicked.connect(self._load_image)
         toolbar.addWidget(self.btn_load)
 
         self.btn_load_folder = QPushButton("打开文件夹")
+        self.btn_load_folder.setProperty("variant", "secondary")
         self.btn_load_folder.setToolTip("批量打开文件夹中的图片")
         self.btn_load_folder.setMinimumWidth(90)
         self.btn_load_folder.clicked.connect(self._load_folder)
@@ -463,6 +552,7 @@ class MainWindow(QMainWindow):
         toolbar.addSpacing(10)
 
         self.btn_draw = QPushButton("框选模式")
+        self.btn_draw.setProperty("variant", "accent")
         self.btn_draw.setCheckable(True)
         self.btn_draw.toggled.connect(self._toggle_draw_mode)
         self.btn_draw.setEnabled(False)
@@ -470,6 +560,7 @@ class MainWindow(QMainWindow):
 
         # Square preset buttons with icons
         self.btn_square_small = QPushButton("小")
+        self.btn_square_small.setProperty("variant", "compact")
         self.btn_square_small.setIcon(self._create_square_icon(8))
         self.btn_square_small.setToolTip("小正方形 (100x100)")
         self.btn_square_small.clicked.connect(lambda: self._add_preset("square", 100))
@@ -477,6 +568,7 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(self.btn_square_small)
 
         self.btn_square_medium = QPushButton("中")
+        self.btn_square_medium.setProperty("variant", "compact")
         self.btn_square_medium.setIcon(self._create_square_icon(14))
         self.btn_square_medium.setToolTip("中正方形 (170x170)")
         self.btn_square_medium.clicked.connect(lambda: self._add_preset("square", 170))
@@ -484,6 +576,7 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(self.btn_square_medium)
 
         self.btn_square_large = QPushButton("大")
+        self.btn_square_large.setProperty("variant", "compact")
         self.btn_square_large.setIcon(self._create_square_icon(20))
         self.btn_square_large.setToolTip("大正方形 (240x240)")
         self.btn_square_large.clicked.connect(lambda: self._add_preset("square", 240))
@@ -493,16 +586,19 @@ class MainWindow(QMainWindow):
         toolbar.addSpacing(10)
 
         self.btn_undo = QPushButton("撤销")
+        self.btn_undo.setProperty("variant", "secondary")
         self.btn_undo.clicked.connect(self._undo)
         self.btn_undo.setEnabled(False)
         toolbar.addWidget(self.btn_undo)
 
         self.btn_clear_all = QPushButton("清空所有")
+        self.btn_clear_all.setProperty("variant", "warning")
         self.btn_clear_all.clicked.connect(self._clear_all_regions)
         self.btn_clear_all.setEnabled(False)
         toolbar.addWidget(self.btn_clear_all)
 
         self.btn_delete = QPushButton("删除")
+        self.btn_delete.setProperty("variant", "danger")
         self.btn_delete.clicked.connect(self._delete_selected)
         self.btn_delete.setEnabled(False)
         toolbar.addWidget(self.btn_delete)
@@ -510,7 +606,7 @@ class MainWindow(QMainWindow):
         toolbar.addStretch()
 
         toolbar.addWidget(QLabel("打码模式:"))
-        self.combo_mode = QComboBox()
+        self.combo_mode = ModeSelector()
         self.combo_mode.addItems(["马赛克", "高斯模糊", "纯色块"])
         self.combo_mode.currentIndexChanged.connect(self._on_mode_changed)
         toolbar.addWidget(self.combo_mode)
@@ -518,9 +614,12 @@ class MainWindow(QMainWindow):
         # Color picker for solid mode
         self._solid_color_rgb = (0, 0, 0)  # Default black (RGB)
         self.color_picker_widget = QWidget()
+        self.color_picker_widget.setObjectName("colorPicker")
+        self.color_picker_widget.setFixedSize(98, 30)
         color_lo = QHBoxLayout(self.color_picker_widget)
         color_lo.setContentsMargins(0, 0, 0, 0)
         color_lo.setSpacing(4)
+        color_lo.setAlignment(Qt.AlignVCenter)
         self._color_buttons = []
         colors = [
             ((0, 0, 0), "黑"),
@@ -530,20 +629,23 @@ class MainWindow(QMainWindow):
         for rgb, name in colors:
             btn = QPushButton()
             btn.setFixedSize(22, 22)
+            btn.setProperty("variant", "color")
             btn.setToolTip(name)
             btn.clicked.connect(lambda checked=False, c=rgb: self._set_solid_color(c))
             self._color_buttons.append(btn)
             color_lo.addWidget(btn)
         self._refresh_color_buttons()
-        self.color_picker_widget.setVisible(False)
+        self._set_color_picker_visible(False)
         toolbar.addWidget(self.color_picker_widget)
 
         self.btn_export = QPushButton("导出当前")
+        self.btn_export.setProperty("variant", "primary")
         self.btn_export.clicked.connect(self._export_image)
         self.btn_export.setEnabled(False)
         toolbar.addWidget(self.btn_export)
 
         self.btn_batch_export = QPushButton("批量导出")
+        self.btn_batch_export.setProperty("variant", "primary")
         self.btn_batch_export.clicked.connect(self._batch_export)
         self.btn_batch_export.setEnabled(False)
         toolbar.addWidget(self.btn_batch_export)
@@ -552,10 +654,11 @@ class MainWindow(QMainWindow):
 
         # Splitter
         splitter = QSplitter(Qt.Horizontal)
+        splitter.setObjectName("imageSplitter")
 
-        src_grp = QGroupBox("原图 (拖拽画框 / 点击选中 / 拖拽边角调整 / 拖拽内部移动 / 双击复制)")
+        src_grp = QGroupBox("原图")
         src_lo = QVBoxLayout(src_grp)
-        src_lo.setContentsMargins(4, 4, 4, 4)
+        src_lo.setContentsMargins(10, 14, 10, 10)
         self.canvas_source = ImageCanvas()
         self.canvas_source.region_added.connect(self._on_region_added)
         self.canvas_source.region_duplicated.connect(self._on_region_duplicated)
@@ -567,7 +670,7 @@ class MainWindow(QMainWindow):
 
         pre_grp = QGroupBox("预览")
         pre_lo = QVBoxLayout(pre_grp)
-        pre_lo.setContentsMargins(4, 4, 4, 4)
+        pre_lo.setContentsMargins(10, 14, 10, 10)
         self.canvas_preview = ImageCanvas()
         self.canvas_preview.set_mode("view")
         pre_lo.addWidget(self.canvas_preview)
@@ -579,12 +682,16 @@ class MainWindow(QMainWindow):
 
         # ===== Right: region list + batch list =====
         right_panel = QVBoxLayout()
+        right_panel.setSpacing(10)
 
         # Region list
         reg_grp = QGroupBox("打码区域")
         reg_lo = QVBoxLayout(reg_grp)
+        reg_lo.setContentsMargins(10, 14, 10, 10)
+        reg_lo.setSpacing(10)
 
         self.list_regions = QListWidget()
+        self.list_regions.setAlternatingRowColors(True)
         self.list_regions.itemChanged.connect(self._on_list_item_changed)
         self.list_regions.currentRowChanged.connect(self._on_list_row_changed)
         reg_lo.addWidget(self.list_regions)
@@ -592,6 +699,7 @@ class MainWindow(QMainWindow):
         intensity_lo = QHBoxLayout()
         intensity_lo.addWidget(QLabel("打码强度:"))
         self.slider_intensity = QSlider(Qt.Horizontal)
+        self.slider_intensity.setMinimumHeight(28)
         self.slider_intensity.setRange(3, 40)
         self.slider_intensity.setValue(12)
         self.slider_intensity.valueChanged.connect(self._update_preview)
@@ -603,7 +711,9 @@ class MainWindow(QMainWindow):
         # Batch list
         batch_grp = QGroupBox("批量图片")
         batch_lo = QVBoxLayout(batch_grp)
+        batch_lo.setContentsMargins(10, 14, 10, 10)
         self.list_batch = QListWidget()
+        self.list_batch.setAlternatingRowColors(True)
         self.list_batch.itemClicked.connect(self._on_batch_item_clicked)
         batch_lo.addWidget(self.list_batch)
         right_panel.addWidget(batch_grp)
@@ -614,13 +724,220 @@ class MainWindow(QMainWindow):
             "Delete 删除选中 | Esc 取消框选/取消选中\n"
             "G 切换框选模式 | 双击区域复制选框"
         )
-        tips.setStyleSheet("color: gray; font-size: 12px;")
+        tips.setObjectName("tipsLabel")
         right_panel.addWidget(tips)
 
         main_layout.addLayout(right_panel, 1)
 
         self.setAcceptDrops(True)
         self.statusBar().showMessage("就绪")
+
+    def _setup_theme(self):
+        self.setStyleSheet("""
+            QMainWindow {
+                background: #f5f7fb;
+                color: #172033;
+                font-family: "Microsoft YaHei", "Segoe UI", sans-serif;
+                font-size: 13px;
+            }
+            QWidget#centralWidget {
+                background: #f5f7fb;
+            }
+            QGroupBox {
+                background: #ffffff;
+                border: 1px solid #dfe5ef;
+                border-radius: 8px;
+                margin-top: 10px;
+                font-weight: 600;
+                color: #27364f;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                left: 12px;
+                padding: 0 5px;
+                background: #ffffff;
+            }
+            QPushButton {
+                min-height: 30px;
+                padding: 5px 12px;
+                border-radius: 6px;
+                border: 1px solid #cfd7e6;
+                background: #ffffff;
+                color: #243047;
+                font-weight: 500;
+            }
+            QPushButton:hover {
+                background: #f3f7ff;
+                border-color: #9db7e8;
+            }
+            QPushButton:pressed {
+                background: #e8f0ff;
+            }
+            QPushButton:disabled {
+                background: #eef1f6;
+                border-color: #d9dee8;
+                color: #9aa5b6;
+            }
+            QPushButton[variant="primary"] {
+                background: #2563eb;
+                border-color: #2563eb;
+                color: #ffffff;
+            }
+            QPushButton[variant="primary"]:hover {
+                background: #1d4ed8;
+                border-color: #1d4ed8;
+            }
+            QPushButton[variant="accent"] {
+                background: #ecfdf5;
+                border-color: #91d8bd;
+                color: #047857;
+            }
+            QPushButton[variant="accent"]:hover {
+                background: #d8f8e9;
+                border-color: #34d399;
+                color: #047857;
+            }
+            QPushButton[variant="accent"]:checked {
+                background: #10b981;
+                border-color: #10b981;
+                color: #ffffff;
+            }
+            QPushButton[variant="accent"]:checked:hover {
+                background: #059669;
+                border-color: #059669;
+                color: #ffffff;
+            }
+            QPushButton[variant="compact"] {
+                min-width: 38px;
+                padding: 4px 8px;
+                background: #f8fafc;
+            }
+            QPushButton[variant="color"] {
+                min-width: 22px;
+                min-height: 22px;
+                max-width: 22px;
+                max-height: 22px;
+                padding: 0;
+                border-radius: 11px;
+            }
+            QPushButton[variant="warning"] {
+                color: #9a5b00;
+                border-color: #f0c878;
+                background: #fff8e8;
+            }
+            QPushButton[variant="warning"]:hover {
+                color: #8a4d00;
+                border-color: #e7b84f;
+                background: #fff1c2;
+            }
+            QPushButton[variant="danger"] {
+                color: #b42318;
+                border-color: #f2b8b5;
+                background: #fff1f1;
+            }
+            QPushButton[variant="danger"]:hover {
+                color: #991b1b;
+                border-color: #ef8f8a;
+                background: #ffe4e4;
+            }
+            QPushButton#modeSelectorButton {
+                min-height: 32px;
+                max-height: 32px;
+                padding: 4px 8px;
+                border: 1px solid #b8c4d6;
+                border-radius: 6px;
+                background: #ffffff;
+                color: #243047;
+                text-align: left;
+            }
+            QPushButton#modeSelectorButton:hover {
+                border-color: #7ea0d8;
+                background: #ffffff;
+            }
+            QPushButton#modeSelectorButton:focus {
+                border: 1px solid #2563eb;
+            }
+            QFrame#modeSelectorPopup {
+                background: transparent;
+                border: 0;
+            }
+            QPushButton#modeSelectorItem {
+                min-height: 30px;
+                max-height: 30px;
+                padding: 4px 10px;
+                border: 0;
+                border-radius: 6px;
+                background: #ffffff;
+                color: #243047;
+                text-align: left;
+            }
+            QPushButton#modeSelectorItem:hover {
+                background: #e8f0ff;
+                color: #1d4ed8;
+            }
+            QWidget#colorPicker {
+                background: transparent;
+            }
+            QWidget#colorPicker:disabled {
+                opacity: 0.45;
+            }
+            QListWidget {
+                background: #ffffff;
+                border: 1px solid #e0e6f0;
+                border-radius: 6px;
+                padding: 4px;
+                outline: 0;
+                alternate-background-color: #f8fafc;
+            }
+            QListWidget::item {
+                min-height: 28px;
+                padding: 4px 6px;
+                border-radius: 4px;
+            }
+            QListWidget::item:selected {
+                background: #e8f0ff;
+                color: #1d4ed8;
+            }
+            QSlider::groove:horizontal {
+                height: 6px;
+                border-radius: 3px;
+                background: #d9e1ee;
+            }
+            QSlider::sub-page:horizontal {
+                border-radius: 3px;
+                background: #2563eb;
+            }
+            QSlider::handle:horizontal {
+                width: 18px;
+                height: 18px;
+                margin: -7px 0;
+                border-radius: 9px;
+                background: #ffffff;
+                border: 2px solid #2563eb;
+            }
+            QSplitter::handle {
+                background: #e5ebf5;
+            }
+            QLabel#tipsLabel {
+                padding: 10px 12px;
+                border: 1px solid #dfe7f3;
+                border-radius: 8px;
+                background: #f8fbff;
+                color: #64748b;
+                font-size: 12px;
+                line-height: 1.4;
+            }
+            QStatusBar {
+                background: #ffffff;
+                border-top: 1px solid #dfe5ef;
+                color: #64748b;
+            }
+            ImageCanvas {
+                background: #111827;
+                border-radius: 6px;
+            }
+        """)
 
     # -- shortcuts --
 
@@ -635,8 +952,8 @@ class MainWindow(QMainWindow):
         painter.setRenderHint(QPainter.Antialiasing)
         offset = (24 - size_px) // 2
         rect = QRect(offset, offset, size_px, size_px)
-        painter.setPen(QPen(QColor(60, 60, 60), 2))
-        painter.setBrush(QColor(220, 220, 220))
+        painter.setPen(QPen(QColor(71, 85, 105), 2))
+        painter.setBrush(QColor(241, 245, 249))
         painter.drawRect(rect)
         painter.end()
         return QIcon(px)
@@ -915,7 +1232,7 @@ class MainWindow(QMainWindow):
 
     def _on_mode_changed(self, index: int):
         is_solid = self.combo_mode.currentText() == "纯色块"
-        self.color_picker_widget.setVisible(is_solid)
+        self._set_color_picker_visible(is_solid)
         self._update_preview()
 
     def _set_solid_color(self, rgb: tuple):
@@ -929,10 +1246,16 @@ class MainWindow(QMainWindow):
             selected = rgb == self._solid_color_rgb
             border = "#1677ff" if selected else "#999"
             width = 3 if selected else 2
+            hover_border = "#1677ff" if selected else "#333"
+            hover_width = 3 if selected else 2
             btn.setStyleSheet(
-                f"QPushButton {{ background-color: rgb({r},{g},{b}); border: {width}px solid {border}; border-radius: 3px; }}"
-                f"QPushButton:hover {{ border: 2px solid #333; }}"
+                f"QPushButton {{ background-color: rgb({r},{g},{b}); border: {width}px solid {border}; border-radius: 11px; }}"
+                f"QPushButton:hover {{ border: {hover_width}px solid {hover_border}; }}"
             )
+
+    def _set_color_picker_visible(self, visible: bool):
+        for btn in self._color_buttons:
+            btn.setVisible(visible)
 
     # -- preview & export --
 
@@ -1046,6 +1369,7 @@ class MainWindow(QMainWindow):
 def main():
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
+    app.setWindowIcon(app_icon())
     window = MainWindow()
     window.show()
     sys.exit(app.exec())
